@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>🚚 Repartidor v2 · Viandas Tandil</title>
+<title>🚚 Repartidor v2.4 · Viandas Tandil</title>
 
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#E8500A">
@@ -13,9 +13,9 @@
 
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
 <style>
-/* ... (Mantené todo tu CSS igual) ... */
 :root {
   --orange:#E8500A; --orange-l:#FFF0E8; --orange-m:#FDDEC9;
   --green:#1A7A45;  --green-l:#E8F5EE;
@@ -117,7 +117,6 @@ main{padding:12px 15px 0;}
 .cobro-transferencia{background:var(--gold);color:#fff;}
 .cobro-efectivo.cobrado{background:var(--green);color:#fff;}
 .cobro-transferencia.cobrado{background:var(--green);color:#fff;}
-.cobro-amount{font-size:10px;font-weight:700;opacity:.8;margin-top:1px;}
 
 .resumen-panel{background:var(--card);border:2px solid var(--green);border-radius:var(--r);margin:16px 15px;padding:20px;display:none;}
 .resumen-panel.visible{display:block;}
@@ -130,12 +129,6 @@ main{padding:12px 15px 0;}
 .res-card.orange{background:var(--orange-l);border-color:var(--orange-m);}
 .res-val{font-size:20px;font-weight:800;color:var(--text);}
 .res-lbl{font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-top:2px;}
-.res-viandas-row{display:flex;gap:8px;margin-top:8px;}
-.res-vianda-pill{flex:1;padding:10px;border-radius:10px;text-align:center;}
-.res-vianda-pill.c{background:var(--orange-l);}
-.res-vianda-pill.s{background:var(--green-l);}
-.res-vianda-num{font-size:22px;font-weight:800;}
-.res-vianda-lbl{font-size:10px;font-weight:700;color:var(--muted);}
 .btn-nueva-ruta{width:100%;padding:14px;border-radius:15px;border:none;background:var(--text);color:var(--bg);font-family:var(--f);font-size:16px;font-weight:800;cursor:pointer;margin-top:12px;transition:all .15s;}
 .btn-nueva-ruta:active{transform:scale(.98);}
 
@@ -189,11 +182,11 @@ main{padding:12px 15px 0;}
 
 <div id="importZone" class="import-area">
   <h2>📋 Cargar Hoja de Ruta</h2>
-  <p>Exportá la hoja de ruta desde <strong>Viandas 2.0</strong> y subí el archivo CSV acá.</p>
+  <p>Subí tu Excel en cualquier formato.<br><strong>¡Lee TODAS las hojas a la vez!</strong></p>
   <label class="btn-upload" for="fileInput">
-    📂 Seleccionar CSV
+    📂 Seleccionar Archivo
   </label>
-  <input type="file" id="fileInput" accept=".csv,.txt"/>
+  <input type="file" id="fileInput" accept=".csv,.txt,.xls,.xlsx"/>
   <div id="loadStatus" class="load-status">⏳ Procesando archivo...</div>
 </div>
 
@@ -211,7 +204,6 @@ main{padding:12px 15px 0;}
 <div class="toast" id="toast"></div>
 
 <script>
-// REGISTRO DEL SERVICE WORKER (AGREGADO)
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js')
     .then(() => console.log("Service Worker registrado con éxito"))
@@ -223,7 +215,6 @@ const STORAGE_KEY = 'repartidor_v2';
 let entregas = [];
 let darkMode = false;
 
-// ... (Resto de tu script original)
 function init() {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
@@ -240,98 +231,165 @@ function init() {
     render();
   }
 }
+
 function save() {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ entregas, darkMode }));
   } catch(e) {}
 }
+
 function applyDark() {
   document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light');
   document.getElementById('darkBtn').textContent = darkMode ? '☀️' : '🌙';
 }
+
 function toggleDark() { darkMode = !darkMode; applyDark(); save(); }
+
 function toast(msg) {
   const el = document.getElementById('toast');
   el.textContent = msg; el.classList.add('show');
   clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove('show'), 2400);
 }
+
+// ─── MOTOR DE LECTURA MULTI-HOJA (EXCEL Y CSV) ───
 document.getElementById('fileInput').addEventListener('change', function(e) {
   const file = e.target.files[0];
   if (!file) return;
+  
   document.getElementById('loadStatus').style.display = 'block';
   const reader = new FileReader();
-  reader.onload = function() {
+  
+  reader.onload = function(e) {
     try {
-      parseCSV(this.result);
+      const data = new Uint8Array(e.target.result);
+      const workbook = XLSX.read(data, {type: 'array'});
+      
+      let todasLasEntregas = [];
+      
+      // Iterar sobre TODAS las hojas del libro de Excel
+      workbook.SheetNames.forEach(sheetName => {
+        const worksheet = workbook.Sheets[sheetName];
+        const rows = XLSX.utils.sheet_to_json(worksheet, {header: 1}); // Devuelve matriz bidimensional
+        
+        const entregasDeHoja = extraerEntregasDeFilas(rows);
+        todasLasEntregas = todasLasEntregas.concat(entregasDeHoja);
+      });
+      
+      document.getElementById('loadStatus').style.display = 'none';
+      
+      if (todasLasEntregas.length === 0) { 
+        toast('⚠️ Archivo sin entregas válidas en ninguna hoja'); 
+        return; 
+      }
+      
+      entregas = todasLasEntregas;
+      save();
+      document.getElementById('importZone').style.display = 'none';
+      document.getElementById('mainContent').style.display = 'block';
+      render();
+      toast(`✅ ${todasLasEntregas.length} clientes listos (de todas las hojas)`);
+      
     } catch(err) {
       console.error(err);
-      toast('⚠️ Error al procesar el archivo');
+      toast('⚠️ Error al procesar el archivo Excel/CSV');
       document.getElementById('loadStatus').style.display = 'none';
     }
   };
-  reader.readAsText(file, 'UTF-8');
+  reader.readAsArrayBuffer(file);
   this.value = '';
 });
-function parseCSV(text) {
-  text = text.replace(/^\uFEFF/, '');
-  const lines = text.split(/\r?\n/).filter(l => l.trim());
-  if (lines.length < 2) { toast('⚠️ El archivo está vacío'); document.getElementById('loadStatus').style.display = 'none'; return; }
-  const sep = lines[0].includes(';') ? ';' : ',';
-  const parseRow = line => {
-    const result = [];
-    let cur = '', inQ = false;
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (ch === '"') { inQ = !inQ; }
-      else if (ch === sep && !inQ) { result.push(cur.trim()); cur = ''; }
-      else { cur += ch; }
+
+// Función aislada para procesar las filas de una hoja específica
+function extraerEntregasDeFilas(rows) {
+  if (!rows || rows.length < 2) return [];
+  
+  // Ubicar la fila de headers inteligentemente (salta filas en blanco superiores)
+  let headerIndex = 0;
+  for(let i = 0; i < Math.min(rows.length, 6); i++) {
+    if(rows[i] && rows[i].some(c => {
+      let s = String(c || '').toLowerCase();
+      return s.includes('direc') || s.includes('domi') || s.includes('clas') || s.includes('salud');
+    })) {
+      headerIndex = i;
+      break;
     }
-    result.push(cur.trim());
-    return result.map(v => v.replace(/^["']|["']$/g,'').trim());
-  };
-  const headers = parseRow(lines[0]).map(h => h.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,''));
+  }
+
+  const headers = (rows[headerIndex] || []).map(h => String(h || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,''));
+  
   const idx = {
-    direccion: headers.findIndex(h => h.includes('direcci') || h.includes('address')),
+    direccion: headers.findIndex(h => h.includes('direcci') || h.includes('domicilio') || h.includes('address')),
     nombre:    headers.findIndex(h => h.includes('nombre') || h.includes('cliente') || h.includes('name')),
     clasicas:  headers.findIndex(h => h.includes('clas') || h.includes('classic')),
     saludables:headers.findIndex(h => h.includes('salud') || h.includes('health')),
     plan:      headers.findIndex(h => h.includes('plan') || h.includes('pago') || h.includes('tipo')),
     telefono:  headers.findIndex(h => h.includes('tel') || h.includes('phone') || h.includes('fono')),
     obs:       headers.findIndex(h => h.includes('obs') || h.includes('nota') || h.includes('note')),
-    monto:     headers.findIndex(h => h.includes('monto') || h.includes('precio') || h.includes('cobrar')),
   };
+
+  // Fallback por defecto si no encuentra la columna por nombre
+  if (idx.direccion === -1) idx.direccion = 0;
+
   const nuevas = [];
-  lines.slice(1).forEach((line, i) => {
-    if (!line.trim()) return;
-    const cols = parseRow(line);
-    const direccion = idx.direccion >= 0 ? cols[idx.direccion] : '';
-    if (!direccion) return;
-    const nombre    = idx.nombre >= 0 ? cols[idx.nombre] : '';
+  rows.slice(headerIndex + 1).forEach((cols) => {
+    if (!cols || cols.length === 0) return;
+    
+    const direccion = idx.direccion >= 0 ? String(cols[idx.direccion] || '').trim() : '';
+    if (!direccion || direccion.toLowerCase() === 'total' || direccion === '0') return;
+
     const clasicas  = Math.max(0, parseInt(idx.clasicas >= 0 ? cols[idx.clasicas] : 0) || 0);
     const saludables= Math.max(0, parseInt(idx.saludables >= 0 ? cols[idx.saludables] : 0) || 0);
-    const planRaw   = idx.plan >= 0 ? cols[idx.plan] : 'Diario';
+    
+    // Ignoramos filas vacías sin viandas asignadas
+    if (clasicas === 0 && saludables === 0) return;
+
+    const nombre    = idx.nombre >= 0 ? String(cols[idx.nombre] || '').trim() : '';
+    const planRaw   = idx.plan >= 0 ? String(cols[idx.plan] || '').trim() : 'Diario';
     const plan      = planRaw ? planRaw.charAt(0).toUpperCase() + planRaw.slice(1).toLowerCase() : 'Diario';
     const payType   = ['Diario','Semanal','Mensual'].includes(plan) ? plan : 'Diario';
-    const telefono  = idx.telefono >= 0 ? cols[idx.telefono] : '';
-    const obs       = idx.obs >= 0 ? cols[idx.obs] : '';
-    const monto     = idx.monto >= 0 ? parseInt(cols[idx.monto]) || 0 : (clasicas+saludables)*7000;
+    const telefono  = idx.telefono >= 0 ? String(cols[idx.telefono] || '').trim() : '';
+    const obs       = idx.obs >= 0 ? String(cols[idx.obs] || '').trim() : '';
+
+    // Filtro tolerante a errores ortográficos para la palabra "PAGA"
+    const requiereCobro = /pag[a-záéíóú]*/i.test(obs);
+    
+    let monto = 0;
+    let textoBoton = '';
+
+    if (requiereCobro) {
+      // Extrae el valor numérico adjunto a la observación (ej: "PAGA 28" -> 28)
+      const matchNum = obs.match(/\d+/);
+      if (matchNum) {
+        const num = parseInt(matchNum[0]);
+        // Si el formato viene simplificado en miles (ej: 28, 14, 120), lo llevamos a pesos reales
+        if (num < 1000) {
+          monto = num * 1000;
+          textoBoton = String(num); 
+        } else {
+          monto = num;
+          textoBoton = String(num);
+        }
+      } else {
+        // Fallback si dice PAGA puro sin números especificados
+        monto = (clasicas + saludables) * 7000;
+        textoBoton = String(monto / 1000);
+      }
+    }
+
     nuevas.push({
-      id: Date.now() + '_' + i + '_' + Math.random().toString(36).slice(2),
+      id: Date.now() + '_' + Math.random().toString(36).slice(2),
       direccion, nombre, clasicas, saludables, payType,
       telefono: telefono.replace(/[^0-9+\s\-]/g, '').trim(),
-      obs, monto, entregado: false, cobradoEfectivo: false, cobradoTransferencia: false,
+      obs, monto, requiereCobro, textoBoton,
+      entregado: false, cobradoEfectivo: false, cobradoTransferencia: false,
     });
   });
-  document.getElementById('loadStatus').style.display = 'none';
-  if (nuevas.length === 0) { toast('⚠️ Error en formato'); return; }
-  entregas = nuevas;
-  save();
-  document.getElementById('importZone').style.display = 'none';
-  document.getElementById('mainContent').style.display = 'block';
-  render();
-  toast(`✅ ${nuevas.length} cargadas`);
+
+  return nuevas;
 }
+
 function fmtMoney(n) { return '$' + Number(n).toLocaleString('es-AR'); }
+
 function marcarEntregado(id) {
   const e = entregas.find(x => x.id === id);
   if (!e) return;
@@ -339,6 +397,7 @@ function marcarEntregado(id) {
   if (navigator.vibrate) navigator.vibrate(50);
   save(); render(); checkResumen();
 }
+
 function cobrar(id, tipo) {
   const e = entregas.find(x => x.id === id);
   if (!e) return;
@@ -351,7 +410,9 @@ function cobrar(id, tipo) {
   }
   save(); renderCard(id);
 }
+
 function render() { renderCounter(); renderList(); checkResumen(); }
+
 function renderCounter() {
   const activas = entregas.filter(e => !e.entregado);
   const total = entregas.length;
@@ -359,20 +420,23 @@ function renderCounter() {
   const clRest = activas.reduce((s, e) => s + e.clasicas, 0);
   const salRest = activas.reduce((s, e) => s + e.saludables, 0);
   const pct = total > 0 ? (entregadas / total) * 100 : 0;
+  
   document.getElementById('vcClasicas').textContent = clRest;
   document.getElementById('vcSaludables').textContent = salRest;
   document.getElementById('vcBar').style.width = pct + '%';
   document.getElementById('vcBarLbl').textContent = `${entregadas} de ${total}`;
   document.getElementById('viandaCounter').style.display = total > 0 ? 'flex' : 'none';
 }
+
 function renderList() {
   const container = document.getElementById('listaEntregas');
   container.innerHTML = '';
   if (entregas.length === 0) {
-    container.innerHTML = `<div class="empty-state"><p>No hay entregas.</p></div>`;
+    container.innerHTML = `<div class="empty-state"><p>No hay entregas cargadas.</p></div>`;
     return;
   }
   entregas.forEach(e => container.appendChild(buildCard(e)));
+  
   Sortable.create(container, {
     handle: '.drag-handle', animation: 150,
     onEnd: function() {
@@ -382,19 +446,32 @@ function renderList() {
     }
   });
 }
+
 function buildCard(e) {
   const card = document.createElement('div');
   card.className = 'client-card' + (e.entregado ? ' delivered' : '');
   card.setAttribute('data-id', e.id);
+  
   let viandas = '';
   if (e.clasicas > 0) viandas += `<div class="v-badge clasica"><span class="v-badge-num">${e.clasicas}</span> 🍗 Clás.</div>`;
   if (e.saludables > 0) viandas += `<div class="v-badge saludable"><span class="v-badge-num">${e.saludables}</span> 🥕 Salud.</div>`;
+  
   const planClass = e.payType === 'Semanal' ? 'plan-semanal' : e.payType === 'Mensual' ? 'plan-mensual' : 'plan-diario';
-  const montoDisplay = e.monto > 0 ? fmtMoney(e.monto) : '';
   const hasTel = e.telefono && e.telefono.length > 3;
   const efCls = e.cobradoEfectivo ? 'cobrado' : '';
   const trCls = e.cobradoTransferencia ? 'cobrado' : '';
+  
   let paidBadge = e.cobradoEfectivo ? `<span class="paid-badge">💵 Cobrado</span>` : (e.cobradoTransferencia ? `<span class="paid-badge">📲 Transferido</span>` : '');
+  
+  let bloqueCobro = '';
+  if (e.requiereCobro) {
+    bloqueCobro = `
+    <div class="card-cobro" style="${e.entregado ? 'display:none' : ''}">
+      <button class="cobro-btn cobro-efectivo ${efCls}" onclick="cobrar('${e.id}','efectivo')">💵 Efec. ${e.textoBoton}</button>
+      <button class="cobro-btn cobro-transferencia ${trCls}" onclick="cobrar('${e.id}','transferencia')">📲 Trans. ${e.textoBoton}</button>
+    </div>`;
+  }
+
   card.innerHTML = `
     <div class="drag-handle">⠿⠿⠿</div>
     <div class="card-main">
@@ -402,7 +479,7 @@ function buildCard(e) {
         <div class="card-address">📍 <span>${e.direccion}</span></div>
         ${e.nombre ? `<div class="card-name">👤 ${e.nombre}</div>` : ''}
         <div class="card-viandas">${viandas}</div>
-        <div class="card-meta"><span class="tag ${planClass}">${e.payType.toUpperCase()}</span> ${montoDisplay ? `<span class="tag neutral">${montoDisplay}</span>` : ''} ${paidBadge}</div>
+        <div class="card-meta"><span class="tag ${planClass}">${e.payType.toUpperCase()}</span> ${paidBadge}</div>
         ${e.obs ? `<div class="card-obs">⚠️ ${e.obs}</div>` : ''}
       </div>
       <div class="card-right">
@@ -410,13 +487,11 @@ function buildCard(e) {
         ${hasTel ? `<a class="phone-btn has-phone" href="tel:${e.telefono}">📞</a>` : `<div class="phone-btn no-phone">📵</div>`}
       </div>
     </div>
-    <div class="card-cobro" style="${e.entregado ? 'display:none' : ''}">
-      <button class="cobro-btn cobro-efectivo ${efCls}" onclick="cobrar('${e.id}','efectivo')">💵 Efec. ${montoDisplay}</button>
-      <button class="cobro-btn cobro-transferencia ${trCls}" onclick="cobrar('${e.id}','transferencia')">📲 Trans. ${montoDisplay}</button>
-    </div>
+    ${bloqueCobro}
   `;
   return card;
 }
+
 function renderCard(id) {
   const container = document.getElementById('listaEntregas');
   const old = container.querySelector(`[data-id="${id}"]`);
@@ -425,31 +500,86 @@ function renderCard(id) {
   container.replaceChild(buildCard(e), old);
   renderCounter(); checkResumen();
 }
+
 function checkResumen() {
   if (entregas.length === 0) return;
   const entregadas = entregas.filter(e => e.entregado).length;
-  if (entregadas === entregas.length) { renderResumen(); document.getElementById('resumenPanel').classList.add('visible'); }
-  else { document.getElementById('resumenPanel').classList.remove('visible'); }
+  if (entregadas === entregas.length) { 
+    renderResumen(); 
+    document.getElementById('resumenPanel').classList.add('visible'); 
+  } else { 
+    document.getElementById('resumenPanel').classList.remove('visible'); 
+  }
 }
+
 function renderResumen() {
   const ef = entregas.filter(e => e.cobradoEfectivo).reduce((s, e) => s + (e.monto || 0), 0);
   const tr = entregas.filter(e => e.cobradoTransferencia).reduce((s, e) => s + (e.monto || 0), 0);
+  
+  const siPagaron = entregas.filter(e => e.cobradoEfectivo || e.cobradoTransferencia);
+  const noPagaron = entregas.filter(e => e.requiereCobro && !e.cobradoEfectivo && !e.cobradoTransferencia);
+  
+  let resumenListasHTML = '';
+
+  // 1. HTML para los que SÍ pagaron
+  if (siPagaron.length > 0) {
+    resumenListasHTML += `
+      <div style="margin-top:15px; padding:12px; background:var(--green-l); border:1.5px solid #86EFAC; border-radius:var(--rs); text-align:left;">
+        <div style="font-weight:800; color:var(--green); font-size:13px; margin-bottom:6px; text-transform:uppercase; letter-spacing:.5px;">✅ Cobros realizados:</div>
+        <ul style="list-style:none; padding:0; margin:0; font-size:12px; display:flex; flex-direction:column; gap:5px;">
+          ${siPagaron.map(p => `
+            <li style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px dashed var(--border); padding-bottom:4px; gap:10px;">
+              <span style="flex:1;">📍 <strong>${p.direccion}</strong> ${p.nombre ? `(${p.nombre})` : ''}</span>
+              <span style="font-weight:700; color:var(--green); white-space:nowrap;">
+                ${p.cobradoEfectivo ? '💵' : '📲'} ${fmtMoney(p.monto)}
+              </span>
+            </li>
+          `).join('')}
+        </ul>
+      </div>`;
+  }
+
+  // 2. HTML para los que NO pagaron
+  if (noPagaron.length > 0) {
+    resumenListasHTML += `
+      <div style="margin-top:15px; padding:12px; background:var(--danger-l); border:1.5px solid #FCA5A5; border-radius:var(--rs); text-align:left;">
+        <div style="font-weight:800; color:var(--danger); font-size:13px; margin-bottom:6px; text-transform:uppercase; letter-spacing:.5px;">❌ Cobros pendientes:</div>
+        <ul style="list-style:none; padding:0; margin:0; font-size:12px; display:flex; flex-direction:column; gap:5px;">
+          ${noPagaron.map(p => `
+            <li style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px dashed var(--border); padding-bottom:4px; gap:10px;">
+              <span style="flex:1;">📍 <strong>${p.direccion}</strong> ${p.nombre ? `(${p.nombre})` : ''}</span>
+              <span style="font-weight:700; color:var(--danger); white-space:nowrap;">Debe: ${fmtMoney(p.monto)}</span>
+            </li>
+          `).join('')}
+        </ul>
+      </div>`;
+  } else if (entregas.filter(e => e.requiereCobro).length > 0) {
+    resumenListasHTML += `
+      <div style="margin-top:15px; padding:10px; background:var(--green-l); border:1.5px solid #86EFAC; border-radius:var(--rs); text-align:left; font-size:12px; font-weight:700; color:var(--green);">
+        ✅ ¡Excelente! Se recaudaron todos los cobros programados para hoy.
+      </div>`;
+  }
+
   document.getElementById('resumenGrid').innerHTML = `
-    <div class="res-card green"><div class="res-val">${fmtMoney(ef+tr)}</div><div class="res-lbl">Total</div></div>
+    <div class="res-card green"><div class="res-val">${fmtMoney(ef+tr)}</div><div class="res-lbl">Total Cobrado</div></div>
     <div class="res-card blue"><div class="res-val">${fmtMoney(ef)}</div><div class="res-lbl">Efectivo</div></div>
     <div class="res-card gold"><div class="res-val">${fmtMoney(tr)}</div><div class="res-lbl">Transf.</div></div>
-    <div class="res-card orange"><div class="res-val">${entregas.filter(e => !e.cobradoEfectivo && !e.cobradoTransferencia).length}</div><div class="res-lbl">Pend.</div></div>`;
+    <div class="res-card orange"><div class="res-val">${noPagaron.length}</div><div class="res-lbl">Impagos</div></div>`;
+    
+  document.getElementById('resumenViandas').innerHTML = resumenListasHTML;
 }
+
 function confirmReset() {
-  if (confirm('¿Limpiar ruta?')) {
+  if (confirm('¿Limpiar ruta actual?')) {
     entregas = []; save();
     document.getElementById('importZone').style.display = 'block';
     document.getElementById('mainContent').style.display = 'none';
     document.getElementById('viandaCounter').style.display = 'none';
     document.getElementById('resumenPanel').classList.remove('visible');
-    toast('🗑 Ruta limpiada');
+    toast('🗑 Ruta limpia para un nuevo día');
   }
 }
+
 init();
 </script>
 </body>
