@@ -1,12 +1,11 @@
 {
-  "name": "Viandas Tandil - Reparto",
-  "short_name": "Reparto",
-  "start_url": "Repartidores_V2_0.html",
+  "name": "Reparto Viandas Tandil",
+  "short_name": "Repartos V2",
+  "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#F7F4F0",
   "theme_color": "#E8500A",
-  "description": "Gestión de repartos para Viandas Tandil",
-  "orientation": "portrait",
+  "description": "Sistema de gestión de rutas y cobros para repartidores.",
   "icons": [
     {
       "src": "https://cdn-icons-png.flaticon.com/512/2830/2830305.png",
